@@ -26,48 +26,46 @@ func NewAof(path string) (*Aof, error) {
 		rd:   bufio.NewReader(f),
 	}
 
-	// start go routine to sync aof to disk every 1 second
-	go func() {
-		for {
-			aof.mu.Lock()
-
-			aof.file.Sync()
-
-			aof.mu.Unlock()
-
-			time.Sleep(time.Second)
-		}
-	}()
+	go aof.syncToDisk()
 
 	return aof, nil
 }
 
-func (aof *Aof) Close() error {
-	aof.mu.Lock()
-	defer aof.mu.Unlock()
+func (a *Aof) syncToDisk() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
 
-	return aof.file.Close()
+	for range ticker.C {
+		a.mu.Lock()
+		a.file.Sync()
+		a.mu.Unlock()
+	}
 }
 
-func (aof *Aof) Write(value Value) error {
-	aof.mu.Lock()
-	defer aof.mu.Unlock()
+func (a *Aof) Close() error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.file.Close()
+}
 
-	_, err := aof.file.Write(value.Marshal())
+func (a *Aof) Write(value Value) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.file.Write(value.Marshal())
+	return err
+}
+
+func (a *Aof) Read(fn func(value Value)) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	_, err := a.file.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
 	}
 
-	return nil
-}
-
-func (aof *Aof) Read(fn func(value Value)) error {
-	aof.mu.Lock()
-	defer aof.mu.Unlock()
-
-	aof.file.Seek(0, io.SeekStart)
-
-	reader := NewResp(aof.file)
+	reader := NewResp(a.file)
 
 	for {
 		value, err := reader.Read()
@@ -75,7 +73,6 @@ func (aof *Aof) Read(fn func(value Value)) error {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-
 			return err
 		}
 
